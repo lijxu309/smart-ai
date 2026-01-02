@@ -32,12 +32,17 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.speechToText = exports.textToSpeech = exports.onUserCreated = exports.updateUserSettings = exports.getUserProfile = exports.generateImage = exports.createConversation = exports.chatCompletion = void 0;
 const admin = __importStar(require("firebase-admin"));
+// Re-export admin functions
+__exportStar(require("./admin"), exports);
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const openai_1 = __importDefault(require("openai"));

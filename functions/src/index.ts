@@ -1,4 +1,7 @@
 import * as admin from 'firebase-admin';
+
+// Re-export admin functions
+export * from './admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import OpenAI from 'openai';
