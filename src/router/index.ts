@@ -138,7 +138,12 @@ const router = createRouter({
 })
 
 // Navigation guard for auth and admin
-router.beforeEach((to, _from, next) => {
+// TEMP: 临时移除权限检查，允许直接访问所有页面
+router.beforeEach((_to, _from, next) => {
+  // 临时跳过所有权限检查
+  next()
+  
+  /* 原始权限检查代码（已临时禁用）
   const userStr = localStorage.getItem('user')
   const user = userStr ? JSON.parse(userStr) : null
   const isAuthenticated = user !== null
@@ -151,6 +156,7 @@ router.beforeEach((to, _from, next) => {
   } else {
     next()
   }
+  */
 })
 
 export default router

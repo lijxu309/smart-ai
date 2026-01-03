@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useUserStore } from '../stores/user'
@@ -19,20 +19,20 @@ const showAllModels = ref(false)
 
 // Models matching the screenshot exactly
 const quickModels = [
-  { id: 'gpt-5-nano', name: 'GPT-5 Nano', icon: '◎', active: true, color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
-  { id: 'gpt-5.2-instant', name: 'GPT-5.2 Instant', icon: '◎', active: false, color: 'text-gray-600', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' },
-  { id: 'gemini-3-pro', name: 'Gemini 3 Pro', icon: '✦', active: false, color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200' },
-  { id: 'claude-4.5', name: 'Claude 4.5', icon: '✻', active: false, color: 'text-orange-600', bgColor: 'bg-orange-50', borderColor: 'border-orange-200' },
-  { id: 'deepseek-v3.2', name: 'DeepSeek-v3.2', icon: '◉', active: false, color: 'text-purple-600', bgColor: 'bg-purple-50', borderColor: 'border-purple-200' },
+  { id: 'gpt-4.1-nano', name: 'GPT-5 Nano', icon: '◎', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200' },
+  { id: 'gpt-4.1-mini', name: 'GPT-5.2 Instant', icon: '◎', color: 'text-gray-600', bgColor: 'bg-gray-50', borderColor: 'border-gray-200' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 3 Pro', icon: '✦', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200' },
+  { id: 'claude-4.5', name: 'Claude 4.5', icon: '✻', color: 'text-orange-600', bgColor: 'bg-orange-50', borderColor: 'border-orange-200' },
+  { id: 'deepseek-v3.2', name: 'DeepSeek-v3.2', icon: '◉', color: 'text-purple-600', bgColor: 'bg-purple-50', borderColor: 'border-purple-200' },
 ]
 
 const allModels = [
+  { id: 'gpt-4.1-nano', name: 'GPT-5 Nano', provider: 'OpenAI', desc: "Fast and efficient for everyday tasks" },
+  { id: 'gpt-4.1-mini', name: 'GPT-5.2 Instant', provider: 'OpenAI', desc: "Balanced speed and quality" },
+  { id: 'gemini-2.5-flash', name: 'Gemini 3 Pro', provider: 'Google', desc: "Powerful multimodal capabilities" },
   { id: 'grok-4.1', name: 'Grok 4.1', provider: 'xAI', desc: "xAI's most advanced reasoning model" },
   { id: 'grok-4', name: 'Grok 4', provider: 'xAI', desc: "xAI's powerful reasoning model" },
-  { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'OpenAI', desc: "OpenAI's newest flagship model" },
-  { id: 'gpt-5', name: 'GPT-5', provider: 'OpenAI', desc: "OpenAI's high-performance model" },
   { id: 'openai-o3', name: 'OpenAI o3', provider: 'OpenAI', desc: "OpenAI's ultimate reasoning model" },
-  { id: 'gemini-3-flash', name: 'Gemini 3 Flash', provider: 'Google', desc: "Google's fast and efficient model" },
   { id: 'perplexity', name: 'Perplexity', provider: 'Perplexity', desc: "Perplexity's cutting-edge AI model" },
   { id: 'llama-3', name: 'Llama 3', provider: 'Meta', desc: "Meta's latest language model" },
 ]
@@ -47,28 +47,25 @@ const scrollToBottom = async () => {
   }
 }
 
+// 监听消息变化，自动滚动到底部
+watch(() => chatStore.currentMessages.length, () => {
+  scrollToBottom()
+})
+
+// 监听流式内容变化，自动滚动
+watch(() => chatStore.streamingContent, () => {
+  scrollToBottom()
+})
+
 const handleSendMessage = async () => {
   const content = messageInput.value.trim()
   if (!content || chatStore.isLoading) return
 
   messageInput.value = ''
-  chatStore.addMessage('user', content)
-  await scrollToBottom()
-
-  chatStore.isLoading = true
   
-  setTimeout(async () => {
-    const responses = [
-      "I'm Smart AI, your intelligent assistant. I can help you with various tasks including answering questions, writing content, analyzing data, and much more. How can I assist you today?",
-      "That's a great question! Let me think about this...\n\nBased on my analysis, I would suggest considering multiple factors here. Would you like me to elaborate on any specific aspect?",
-      "I understand what you're looking for. Here's my response:\n\n1. First, let's consider the main points\n2. Then, we can explore the details\n3. Finally, I'll provide my recommendations\n\nWould you like me to go deeper into any of these areas?",
-    ]
-    
-    const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-    chatStore.addMessage('assistant', randomResponse)
-    chatStore.isLoading = false
-    await scrollToBottom()
-  }, 1500)
+  // 使用 store 的 sendMessage 方法，它会处理 AI 响应
+  await chatStore.sendMessage(content)
+  await scrollToBottom()
 }
 
 const handleKeydown = (e: KeyboardEvent) => {
@@ -83,7 +80,7 @@ const toggleSidebar = () => {
 }
 
 const selectModel = (modelId: string) => {
-  chatStore.setCurrentModel(modelId)
+  chatStore.setModel(modelId)
 }
 
 const goToImageGenerator = () => {
@@ -92,6 +89,10 @@ const goToImageGenerator = () => {
 
 const startDeepResearch = () => {
   showUpgradeModal.value = true
+}
+
+const regenerateResponse = () => {
+  chatStore.regenerateLastResponse()
 }
 
 onMounted(() => {
@@ -136,7 +137,7 @@ onMounted(() => {
             <span>Temporary</span>
           </button>
           <div class="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white text-sm font-medium">
-            {{ userStore.userName?.charAt(0)?.toUpperCase() || 'C' }}
+            {{ userStore.userName?.charAt(0)?.toUpperCase() || 'U' }}
           </div>
         </div>
       </header>
@@ -166,12 +167,12 @@ onMounted(() => {
                 @click="selectModel(model.id)"
                 :class="[
                   'px-4 py-2 rounded-full text-sm flex items-center space-x-2 transition border font-medium',
-                  chatStore.currentModel === model.id 
+                  chatStore.selectedModel === model.id 
                     ? `${model.bgColor} ${model.borderColor} ${model.color}` 
                     : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                 ]"
               >
-                <span :class="chatStore.currentModel === model.id ? model.color : 'text-gray-400'">{{ model.icon }}</span>
+                <span :class="chatStore.selectedModel === model.id ? model.color : 'text-gray-400'">{{ model.icon }}</span>
                 <span>{{ model.name }}</span>
               </button>
               <button
@@ -270,20 +271,54 @@ onMounted(() => {
               :message="message"
             />
             
-            <!-- Loading indicator -->
+            <!-- Error message -->
+            <div v-if="chatStore.error" class="flex items-center justify-center">
+              <div class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-600 text-sm flex items-center space-x-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{{ chatStore.error }}</span>
+                <button @click="chatStore.clearError()" class="ml-2 text-red-400 hover:text-red-600">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            
+            <!-- Loading indicator with streaming content -->
             <div v-if="chatStore.isLoading" class="flex items-start space-x-3">
-              <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+              <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
                 <svg class="w-5 h-5 text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                 </svg>
               </div>
-              <div class="bg-gray-100 rounded-2xl px-4 py-3">
-                <div class="flex space-x-1">
-                  <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
-                  <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
-                  <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
-                </div>
+              <div class="bg-gray-100 rounded-2xl px-4 py-3 max-w-[80%]">
+                <template v-if="chatStore.streamingContent">
+                  <p class="text-gray-800 whitespace-pre-wrap">{{ chatStore.streamingContent }}</p>
+                  <span class="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-1"></span>
+                </template>
+                <template v-else>
+                  <div class="flex space-x-1">
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                  </div>
+                </template>
               </div>
+            </div>
+
+            <!-- Regenerate button -->
+            <div v-if="!chatStore.isLoading && chatStore.currentMessages.length > 1" class="flex justify-center">
+              <button 
+                @click="regenerateResponse"
+                class="flex items-center space-x-2 px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Regenerate response</span>
+              </button>
             </div>
           </div>
         </template>
@@ -298,7 +333,8 @@ onMounted(() => {
               @keydown="handleKeydown"
               placeholder="Write your message"
               rows="2"
-              class="w-full px-4 py-3 bg-transparent resize-none focus:outline-none text-gray-900 placeholder-gray-400"
+              :disabled="chatStore.isLoading"
+              class="w-full px-4 py-3 bg-transparent resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50"
             ></textarea>
             
             <div class="flex items-center justify-between px-4 py-2 border-t border-gray-100">
@@ -375,7 +411,7 @@ onMounted(() => {
               @click="selectModel(model.id); showAllModels = false"
               :class="[
                 'p-4 rounded-xl text-left transition border',
-                chatStore.currentModel === model.id 
+                chatStore.selectedModel === model.id 
                   ? 'bg-emerald-50 border-emerald-200' 
                   : 'bg-gray-50 hover:bg-gray-100 border-transparent'
               ]"

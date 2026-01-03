@@ -58,7 +58,7 @@ const formatDate = (date: Date) => {
 const isActive = (path: string) => route.path === path
 
 const selectModel = (modelId: string) => {
-  chatStore.setCurrentModel(modelId)
+  chatStore.setModel(modelId)
   router.push('/chat')
 }
 </script>
