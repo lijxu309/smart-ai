@@ -49,6 +49,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/SettingsView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/image-library',
+    name: 'image-library',
+    component: () => import('../views/ImageLibraryView.vue'),
+    meta: { requiresAuth: true },
+  },
   
   // Admin routes (requires admin role)
   {
