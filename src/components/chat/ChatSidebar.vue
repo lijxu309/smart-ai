@@ -29,6 +29,8 @@ const aiModels = [
   { id: 'claude-4.5', name: 'Claude 4.5', icon: '✻', color: 'text-orange-400' },
   { id: 'gpt-5.2', name: 'GPT-5.2', icon: '◎', color: 'text-gray-300' },
   { id: 'perplexity', name: 'Perplexity', icon: '◉', color: 'text-teal-400' },
+  { id: 'deepseek-chat', name: 'DeepSeek-V3', icon: '◉', color: 'text-purple-500' },
+  { id: 'deepseek-reasoner', name: 'DeepSeek-R1', icon: '◎', color: 'text-purple-400' },
 ]
 
 // AI Tools - matching the screenshot
