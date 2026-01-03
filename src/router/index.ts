@@ -55,6 +55,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/ImageLibraryView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/search-engine',
+    name: 'search-engine',
+    component: () => import('../views/SearchEngineView.vue'),
+    meta: { requiresAuth: true },
+  },
   
   // Admin routes (requires admin role)
   {
