@@ -84,7 +84,7 @@ const openCreatePostModal = () => {
     category: 'Tutorial',
     status: 'draft',
     publishedAt: null,
-    createdAt: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0] || '',
     views: 0,
   }
   showBlogModal.value = true
@@ -132,7 +132,7 @@ const deletePost = (id: string) => {
 
 const publishPost = (post: BlogPost) => {
   post.status = 'published'
-  post.publishedAt = new Date().toISOString().split('T')[0]
+  post.publishedAt = new Date().toISOString().split('T')[0] || null
 }
 
 // FAQ functions

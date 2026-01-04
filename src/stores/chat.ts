@@ -11,7 +11,7 @@ export const useChatStore = defineStore('chat', () => {
   const currentConversationId = ref<string | null>(null)
   const isLoading = ref(false)
   const isStreaming = ref(false)
-  const selectedModel = ref('gpt-4.1-nano')
+  const selectedModel = ref('deepseek-chat')
   const streamingContent = ref('')
   const error = ref<string | null>(null)
 
@@ -71,7 +71,7 @@ export const useChatStore = defineStore('chat', () => {
     const conv = conversations.value.find(c => c.id === currentConversationId.value)
     if (conv && conv.messages.length > 0) {
       const lastMessage = conv.messages[conv.messages.length - 1]
-      if (lastMessage.role === 'assistant') {
+      if (lastMessage && lastMessage.role === 'assistant') {
         lastMessage.content = content
       }
     }
@@ -127,14 +127,15 @@ export const useChatStore = defineStore('chat', () => {
       updateLastMessage(response || streamingContent.value)
       saveToLocalStorage()
 
-    } catch (err: any) {
-      error.value = err.message || '发送消息失败'
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : '发送消息失败'
+      error.value = errorMessage
       // 移除空的助手消息
-      const conv = conversations.value.find(c => c.id === currentConversationId.value)
-      if (conv && conv.messages.length > 0) {
-        const lastMessage = conv.messages[conv.messages.length - 1]
-        if (lastMessage.role === 'assistant' && !lastMessage.content) {
-          conv.messages.pop()
+      const convRef = conversations.value.find(c => c.id === currentConversationId.value)
+      if (convRef && convRef.messages.length > 0) {
+        const lastMsg = convRef.messages[convRef.messages.length - 1]
+        if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.content) {
+          convRef.messages.pop()
         }
       }
       console.error('Send message error:', err)
@@ -227,7 +228,8 @@ export const useChatStore = defineStore('chat', () => {
     // 找到最后一条用户消息
     let lastUserMessageIndex = -1
     for (let i = conv.messages.length - 1; i >= 0; i--) {
-      if (conv.messages[i].role === 'user') {
+      const msg = conv.messages[i]
+      if (msg && msg.role === 'user') {
         lastUserMessageIndex = i
         break
       }
@@ -235,7 +237,10 @@ export const useChatStore = defineStore('chat', () => {
 
     if (lastUserMessageIndex === -1) return
 
-    const lastUserMessage = conv.messages[lastUserMessageIndex].content
+    const lastUserMsg = conv.messages[lastUserMessageIndex]
+    if (!lastUserMsg) return
+    
+    const lastUserMessage = lastUserMsg.content
 
     // 移除最后一条用户消息之后的所有消息
     conv.messages = conv.messages.slice(0, lastUserMessageIndex)

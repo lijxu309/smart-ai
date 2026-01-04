@@ -110,7 +110,7 @@ const refundTransaction = (txId: string) => {
         amount: tx.amount,
         type: 'refund',
         status: 'completed',
-        date: new Date().toISOString().split('T')[0],
+        date: new Date().toISOString().split('T')[0] || '',
         paymentMethod: tx.paymentMethod,
       })
     }

@@ -104,6 +104,12 @@ const goToRegister = () => {
 const goToPricing = () => {
   router.push('/pricing')
 }
+
+// Expose variables for template
+void handleGetStarted
+void goToPricing
+void aiModels
+void plans
 </script>
 
 <template>

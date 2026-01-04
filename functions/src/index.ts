@@ -1,33 +1,41 @@
 import * as admin from 'firebase-admin';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { defineSecret } from 'firebase-functions/params';
 
 // Re-export admin functions
 export * from './admin';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-import OpenAI from 'openai';
+
+// Define secrets
+const deepseekApiKey = defineSecret('DEEPSEEK_API_KEY');
+const openaiApiKey = defineSecret('OPENAI_API_KEY');
 
 // Initialize Firebase Admin
 admin.initializeApp();
 
 const db = admin.firestore();
 
-// Initialize OpenAI client
-const getOpenAIClient = () => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured');
-  }
-  return new OpenAI({ apiKey });
+// Model configuration mapping
+const MODEL_CONFIG: Record<string, { provider: 'deepseek' | 'openai'; model: string }> = {
+  'deepseek-chat': { provider: 'deepseek', model: 'deepseek-chat' },
+  'deepseek-reasoner': { provider: 'deepseek', model: 'deepseek-reasoner' },
+  'gpt-5-nano': { provider: 'deepseek', model: 'deepseek-chat' },
+  'gpt-5.2-instant': { provider: 'deepseek', model: 'deepseek-chat' },
+  'gemini-3-pro': { provider: 'deepseek', model: 'deepseek-chat' },
+  'claude-4.5': { provider: 'deepseek', model: 'deepseek-chat' },
+  'perplexity': { provider: 'deepseek', model: 'deepseek-chat' },
+  'gpt-4': { provider: 'openai', model: 'gpt-4' },
+  'gpt-4-turbo': { provider: 'openai', model: 'gpt-4-turbo' },
 };
 
 /**
- * Chat completion function
- * Handles AI chat requests and stores conversation history
+ * Chat completion function with DeepSeek API support
  */
 export const chatCompletion = onCall(
   { 
     cors: true,
     maxInstances: 10,
+    secrets: [deepseekApiKey, openaiApiKey],
   },
   async (request) => {
     // Verify authentication
@@ -35,7 +43,7 @@ export const chatCompletion = onCall(
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const { messages, model = 'gpt-4', conversationId } = request.data;
+    const { messages, model = 'deepseek-chat', conversationId } = request.data;
     const userId = request.auth.uid;
 
     if (!messages || !Array.isArray(messages)) {
@@ -43,20 +51,52 @@ export const chatCompletion = onCall(
     }
 
     try {
-      const openai = getOpenAIClient();
+      const config = MODEL_CONFIG[model] || { provider: 'deepseek', model: 'deepseek-chat' };
+      
+      let apiKey: string;
+      let baseUrl: string;
+      let actualModel: string;
 
-      // Call OpenAI API
-      const completion = await openai.chat.completions.create({
-        model,
-        messages: messages.map((msg: { role: string; content: string }) => ({
-          role: msg.role as 'user' | 'assistant' | 'system',
-          content: msg.content,
-        })),
-        max_tokens: 4096,
-        temperature: 0.7,
+      if (config.provider === 'deepseek') {
+        apiKey = deepseekApiKey.value();
+        baseUrl = 'https://api.deepseek.com';
+        actualModel = config.model;
+      } else {
+        apiKey = openaiApiKey.value();
+        baseUrl = 'https://api.openai.com/v1';
+        actualModel = config.model;
+      }
+
+      if (!apiKey) {
+        throw new HttpsError('failed-precondition', 'API key not configured');
+      }
+
+      // Call AI API
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: actualModel,
+          messages: messages.map((msg: { role: string; content: string }) => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          max_tokens: 4096,
+          temperature: 0.7,
+        }),
       });
 
-      const assistantMessage = completion.choices[0]?.message?.content || '';
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('API error:', errorData);
+        throw new HttpsError('internal', 'AI API request failed');
+      }
+
+      const data = await response.json();
+      const assistantMessage = data.choices?.[0]?.message?.content || '';
 
       // Store conversation in Firestore
       if (conversationId) {
@@ -75,14 +115,113 @@ export const chatCompletion = onCall(
         });
       }
 
+      // Update user message count
+      await db.collection('users').doc(userId).update({
+        messagesUsed: admin.firestore.FieldValue.increment(1),
+      }).catch(() => {
+        // Create user document if it doesn't exist
+        db.collection('users').doc(userId).set({
+          messagesUsed: 1,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+
       return {
         success: true,
         message: assistantMessage,
-        usage: completion.usage,
+        usage: data.usage,
       };
     } catch (error) {
       console.error('Chat completion error:', error);
+      if (error instanceof HttpsError) {
+        throw error;
+      }
       throw new HttpsError('internal', 'Failed to generate response');
+    }
+  }
+);
+
+/**
+ * Streaming chat completion endpoint (HTTP)
+ */
+export const chatCompletionStream = onRequest(
+  {
+    cors: true,
+    maxInstances: 10,
+    secrets: [deepseekApiKey],
+  },
+  async (req, res) => {
+    // Set headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+      const { messages, model = 'deepseek-chat', idToken } = req.body;
+
+      // Verify Firebase ID token
+      if (!idToken) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      try {
+        await admin.auth().verifyIdToken(idToken);
+      } catch {
+        res.status(401).json({ error: 'Invalid token' });
+        return;
+      }
+
+      if (!messages || !Array.isArray(messages)) {
+        res.status(400).json({ error: 'Messages array is required' });
+        return;
+      }
+
+      const config = MODEL_CONFIG[model] || { provider: 'deepseek', model: 'deepseek-chat' };
+      const apiKey = deepseekApiKey.value();
+
+      if (!apiKey) {
+        res.status(500).json({ error: 'API key not configured' });
+        return;
+      }
+
+      // Call DeepSeek API with streaming
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages,
+          max_tokens: 4096,
+          temperature: 0.7,
+          stream: true,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        res.status(500).json({ error: 'AI API request failed' });
+        return;
+      }
+
+      // Stream the response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        res.write(chunk);
+      }
+
+      res.end();
+    } catch (error) {
+      console.error('Streaming error:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -124,12 +263,13 @@ export const createConversation = onCall(
 );
 
 /**
- * Image generation function
+ * Image generation function with DeepSeek/OpenAI support
  */
 export const generateImage = onCall(
   { 
     cors: true,
     maxInstances: 5,
+    secrets: [openaiApiKey],
   },
   async (request) => {
     if (!request.auth) {
@@ -144,7 +284,11 @@ export const generateImage = onCall(
     }
 
     try {
-      const openai = getOpenAIClient();
+      const apiKey = openaiApiKey.value();
+      
+      if (!apiKey) {
+        throw new HttpsError('failed-precondition', 'OpenAI API key not configured');
+      }
 
       // Check user's image generation quota
       const userDoc = await db.collection('users').doc(userId).get();
@@ -156,17 +300,31 @@ export const generateImage = onCall(
         throw new HttpsError('resource-exhausted', 'Image generation quota exceeded');
       }
 
-      // Generate image
-      const response = await openai.images.generate({
-        model: 'dall-e-3',
-        prompt,
-        n: 1,
-        size: size as '1024x1024' | '1792x1024' | '1024x1792',
-        quality: quality as 'standard' | 'hd',
-        style: style as 'vivid' | 'natural',
+      // Generate image using OpenAI DALL-E
+      const response = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'dall-e-3',
+          prompt,
+          n: 1,
+          size,
+          quality,
+          style,
+        }),
       });
 
-      const imageUrl = response.data?.[0]?.url;
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Image generation error:', errorData);
+        throw new HttpsError('internal', 'Failed to generate image');
+      }
+
+      const data = await response.json();
+      const imageUrl = data.data?.[0]?.url;
 
       if (!imageUrl) {
         throw new HttpsError('internal', 'Failed to generate image');
@@ -194,7 +352,7 @@ export const generateImage = onCall(
       return {
         success: true,
         imageUrl,
-        revisedPrompt: response.data?.[0]?.revised_prompt,
+        revisedPrompt: data.data?.[0]?.revised_prompt,
       };
     } catch (error) {
       console.error('Image generation error:', error);
@@ -227,6 +385,7 @@ export const getUserProfile = onCall(
           email: request.auth.token.email,
           displayName: request.auth.token.name || 'User',
           plan: 'free',
+          role: 'user',
           messageQuota: 100,
           messagesUsed: 0,
           imageQuota: 10,
@@ -298,17 +457,17 @@ export const onUserCreated = onDocumentCreated(
 
     const userData = snapshot.data();
     console.log('New user created:', event.params.userId, userData);
-
-    // Additional initialization logic can be added here
-    // e.g., send welcome email, create default folders, etc.
   }
 );
 
 /**
- * Text-to-speech function
+ * Text-to-speech function using OpenAI TTS
  */
 export const textToSpeech = onCall(
-  { cors: true },
+  { 
+    cors: true,
+    secrets: [openaiApiKey],
+  },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'User must be authenticated');
@@ -320,19 +479,40 @@ export const textToSpeech = onCall(
       throw new HttpsError('invalid-argument', 'Text is required');
     }
 
-    try {
-      const openai = getOpenAIClient();
+    if (text.length > 4096) {
+      throw new HttpsError('invalid-argument', 'Text is too long (max 4096 characters)');
+    }
 
-      const response = await openai.audio.speech.create({
-        model: 'tts-1',
-        voice: voice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
-        input: text,
-        speed,
+    try {
+      const apiKey = openaiApiKey.value();
+      
+      if (!apiKey) {
+        throw new HttpsError('failed-precondition', 'OpenAI API key not configured');
+      }
+
+      const response = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          voice,
+          input: text,
+          speed,
+        }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('TTS error:', errorData);
+        throw new HttpsError('internal', 'Failed to generate speech');
+      }
+
       // Convert to base64
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const base64Audio = buffer.toString('base64');
+      const arrayBuffer = await response.arrayBuffer();
+      const base64Audio = Buffer.from(arrayBuffer).toString('base64');
 
       return {
         success: true,
@@ -341,49 +521,147 @@ export const textToSpeech = onCall(
       };
     } catch (error) {
       console.error('Text-to-speech error:', error);
+      if (error instanceof HttpsError) {
+        throw error;
+      }
       throw new HttpsError('internal', 'Failed to generate speech');
     }
   }
 );
 
 /**
- * Speech-to-text function (transcription)
+ * Speech-to-text function using OpenAI Whisper
  */
 export const speechToText = onCall(
-  { cors: true },
+  { 
+    cors: true,
+    secrets: [openaiApiKey],
+  },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const { audioBase64, language = 'en' } = request.data;
+    const { audioBase64, language = 'en', format = 'webm' } = request.data;
 
     if (!audioBase64) {
       throw new HttpsError('invalid-argument', 'Audio data is required');
     }
 
     try {
-      const openai = getOpenAIClient();
+      const apiKey = openaiApiKey.value();
+      
+      if (!apiKey) {
+        throw new HttpsError('failed-precondition', 'OpenAI API key not configured');
+      }
 
       // Convert base64 to buffer
       const buffer = Buffer.from(audioBase64, 'base64');
       
-      // Create a File-like object
-      const file = new File([buffer], 'audio.webm', { type: 'audio/webm' });
+      // Create FormData for multipart upload
+      const formData = new FormData();
+      const blob = new Blob([buffer], { type: `audio/${format}` });
+      formData.append('file', blob, `audio.${format}`);
+      formData.append('model', 'whisper-1');
+      formData.append('language', language);
 
-      const transcription = await openai.audio.transcriptions.create({
-        file,
-        model: 'whisper-1',
-        language,
+      const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: formData,
       });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('STT error:', errorData);
+        throw new HttpsError('internal', 'Failed to transcribe audio');
+      }
+
+      const data = await response.json();
 
       return {
         success: true,
-        text: transcription.text,
+        text: data.text,
       };
     } catch (error) {
       console.error('Speech-to-text error:', error);
+      if (error instanceof HttpsError) {
+        throw error;
+      }
       throw new HttpsError('internal', 'Failed to transcribe audio');
+    }
+  }
+);
+
+/**
+ * Get user's conversation history
+ */
+export const getConversations = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated');
+    }
+
+    const userId = request.auth.uid;
+    const { limit = 50 } = request.data || {};
+
+    try {
+      const conversationsRef = db
+        .collection('users')
+        .doc(userId)
+        .collection('conversations')
+        .orderBy('updatedAt', 'desc')
+        .limit(limit);
+
+      const snapshot = await conversationsRef.get();
+      const conversations = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      return {
+        success: true,
+        conversations,
+      };
+    } catch (error) {
+      console.error('Get conversations error:', error);
+      throw new HttpsError('internal', 'Failed to get conversations');
+    }
+  }
+);
+
+/**
+ * Delete a conversation
+ */
+export const deleteConversation = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated');
+    }
+
+    const { conversationId } = request.data;
+    const userId = request.auth.uid;
+
+    if (!conversationId) {
+      throw new HttpsError('invalid-argument', 'Conversation ID is required');
+    }
+
+    try {
+      await db
+        .collection('users')
+        .doc(userId)
+        .collection('conversations')
+        .doc(conversationId)
+        .delete();
+
+      return { success: true };
+    } catch (error) {
+      console.error('Delete conversation error:', error);
+      throw new HttpsError('internal', 'Failed to delete conversation');
     }
   }
 );

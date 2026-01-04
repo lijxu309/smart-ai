@@ -212,7 +212,8 @@ export const recordAudio = async (): Promise<string> => {
           const audioBlob = new Blob(audioChunks, { type: 'audio/webm' })
           const reader = new FileReader()
           reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1]
+            const result = reader.result as string
+            const base64 = result.split(',')[1] || ''
             resolve(base64)
           }
           reader.readAsDataURL(audioBlob)

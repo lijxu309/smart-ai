@@ -21,7 +21,6 @@ const userStore = useUserStore()
 
 const showModelsDropdown = ref(true)
 const showToolsDropdown = ref(true)
-const historySearchQuery = ref('')
 
 // AI Models - matching the screenshot
 const aiModels = [
@@ -43,18 +42,6 @@ const aiTools = [
 const handleLogout = async () => {
   await userStore.logout()
   router.push('/')
-}
-
-const formatDate = (date: Date) => {
-  const d = new Date(date)
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-  
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days < 7) return `${days} days ago`
-  return d.toLocaleDateString()
 }
 
 const isActive = (path: string) => route.path === path
@@ -237,6 +224,31 @@ const selectModel = (modelId: string) => {
               </button>
             </div>
           </button>
+        </div>
+      </div>
+
+      <!-- User Info & Logout -->
+      <div v-if="userStore.isAuthenticated" class="px-3 pt-4 pb-2">
+        <div class="border-t border-gray-100 pt-3">
+          <div class="flex items-center justify-between px-3 py-2">
+            <div class="flex items-center space-x-2">
+              <div class="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
+                <span class="text-primary-600 text-sm font-medium">
+                  {{ userStore.userName.charAt(0).toUpperCase() }}
+                </span>
+              </div>
+              <span class="text-sm text-gray-700 truncate max-w-[120px]">{{ userStore.userName }}</span>
+            </div>
+            <button 
+              @click="handleLogout"
+              class="p-1.5 hover:bg-gray-100 rounded-lg transition text-gray-500 hover:text-gray-700"
+              title="Logout"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>

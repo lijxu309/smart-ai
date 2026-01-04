@@ -56,7 +56,7 @@ const openCreateModal = () => {
     model: 'gpt-4',
     isActive: true,
     usageCount: 0,
-    createdAt: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0] || '',
   }
   showModal.value = true
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import AdminLayout from '../../components/admin/AdminLayout.vue'
 
 // Mock data - in production, fetch from API

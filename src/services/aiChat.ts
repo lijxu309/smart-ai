@@ -1,8 +1,18 @@
 /**
  * AI Chat Service - 核心聊天功能
- * 使用 DeepSeek API 实现 AI 对话
+ * 
+ * 支持两种模式:
+ * 1. 生产模式: 通过 Firebase Cloud Functions 调用 API (安全)
+ * 2. 开发模式: 直接调用 DeepSeek API (仅用于开发测试)
+ * 
  * API 文档: https://api-docs.deepseek.com/zh-cn/
  */
+
+import { getFunctions, httpsCallable } from 'firebase/functions'
+import { getAuth } from 'firebase/auth'
+
+// 获取 Firebase Functions 实例
+const functions = getFunctions()
 
 // AI 模型配置
 export interface AIModel {
@@ -35,7 +45,6 @@ export interface Conversation {
 }
 
 // 支持的 AI 模型列表
-// 前端显示名称映射到 DeepSeek 实际模型
 export const AI_MODELS: AIModel[] = [
   {
     id: 'deepseek-chat',
@@ -62,7 +71,7 @@ export const AI_MODELS: AIModel[] = [
     description: '快速响应，适合日常对话',
     maxTokens: 4096,
     icon: '◎',
-    apiModel: 'deepseek-chat' // 映射到 DeepSeek
+    apiModel: 'deepseek-chat'
   },
   {
     id: 'gpt-5.2-instant',
@@ -104,13 +113,20 @@ export function getApiModel(modelId: string): string {
   return model?.apiModel || 'deepseek-chat'
 }
 
+// 检查是否使用后端模式
+function useBackendMode(): boolean {
+  // 如果配置了 FUNCTIONS_URL 或者没有配置前端 API Key，则使用后端模式
+  const functionsUrl = import.meta.env.VITE_FUNCTIONS_URL
+  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY
+  return !!functionsUrl || !apiKey
+}
+
 // AI 聊天服务类
 export class AIChatService {
   private apiKey: string
   private baseUrl: string
   
   constructor() {
-    // 使用 DeepSeek API 配置
     this.apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY || ''
     this.baseUrl = import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   }
@@ -121,7 +137,58 @@ export class AIChatService {
     model: string = 'deepseek-chat',
     onStream?: (chunk: string) => void
   ): Promise<string> {
-    // 获取实际的 API 模型名称
+    // 优先使用后端云函数（安全模式）
+    if (useBackendMode() && !onStream) {
+      return await this.sendMessageViaBackend(messages, model)
+    }
+    
+    // 开发模式：直接调用 API
+    return await this.sendMessageDirect(messages, model, onStream)
+  }
+
+  // 通过后端云函数发送消息（安全）
+  private async sendMessageViaBackend(
+    messages: ChatMessage[],
+    model: string
+  ): Promise<string> {
+    try {
+      const chatCompletion = httpsCallable<
+        { messages: Array<{role: string, content: string}>, model: string },
+        { success: boolean, message: string }
+      >(functions, 'chatCompletion')
+
+      const formattedMessages = messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+
+      const result = await chatCompletion({
+        messages: formattedMessages,
+        model
+      })
+
+      if (result.data.success) {
+        return result.data.message
+      } else {
+        throw new Error('Failed to get response from AI')
+      }
+    } catch (error: any) {
+      console.error('Backend chat error:', error)
+      // 如果后端调用失败，尝试直接调用（开发模式回退）
+      if (this.apiKey) {
+        console.log('Falling back to direct API call')
+        return await this.sendMessageDirect(messages, model)
+      }
+      throw error
+    }
+  }
+
+  // 直接调用 API（开发模式）
+  private async sendMessageDirect(
+    messages: ChatMessage[],
+    model: string = 'deepseek-chat',
+    onStream?: (chunk: string) => void
+  ): Promise<string> {
     const apiModel = getApiModel(model)
     
     const formattedMessages = messages.map(msg => ({
@@ -129,7 +196,6 @@ export class AIChatService {
       content: msg.content
     }))
 
-    // 添加系统提示
     const systemMessage = {
       role: 'system',
       content: 'You are a helpful AI assistant called Smart AI. You are knowledgeable, friendly, and always try to provide accurate and helpful responses. You can help with various tasks including answering questions, writing content, coding, analysis, and more.'
@@ -138,12 +204,10 @@ export class AIChatService {
     const allMessages = [systemMessage, ...formattedMessages]
 
     try {
-      // 如果提供了流式回调，使用流式响应
       if (onStream) {
         return await this.streamChat(allMessages, apiModel, onStream)
       }
 
-      // 否则使用普通请求
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -254,9 +318,192 @@ export class AIChatService {
       
       return response.slice(0, 30) || '新对话'
     } catch {
-      // 如果生成失败，使用消息的前20个字符作为标题
       return firstMessage.slice(0, 20) + (firstMessage.length > 20 ? '...' : '')
     }
+  }
+}
+
+// ============ 语音功能 ============
+
+/**
+ * 文字转语音 (Text-to-Speech)
+ * 使用 Firebase Cloud Function 调用 OpenAI TTS API
+ */
+export async function textToSpeech(
+  text: string,
+  options: {
+    voice?: 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer'
+    speed?: number
+  } = {}
+): Promise<{ success: boolean; audio?: string; format?: string; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const ttsFn = httpsCallable<
+      { text: string; voice?: string; speed?: number },
+      { success: boolean; audio: string; format: string }
+    >(functions, 'textToSpeech')
+
+    const result = await ttsFn({
+      text,
+      voice: options.voice || 'alloy',
+      speed: options.speed || 1.0,
+    })
+
+    return result.data
+  } catch (error: any) {
+    console.error('TTS error:', error)
+    return { success: false, error: error.message || 'Failed to generate speech' }
+  }
+}
+
+/**
+ * 语音转文字 (Speech-to-Text)
+ * 使用 Firebase Cloud Function 调用 OpenAI Whisper API
+ */
+export async function speechToText(
+  audioBase64: string,
+  options: {
+    language?: string
+    format?: string
+  } = {}
+): Promise<{ success: boolean; text?: string; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const sttFn = httpsCallable<
+      { audioBase64: string; language?: string; format?: string },
+      { success: boolean; text: string }
+    >(functions, 'speechToText')
+
+    const result = await sttFn({
+      audioBase64,
+      language: options.language || 'en',
+      format: options.format || 'webm',
+    })
+
+    return result.data
+  } catch (error: any) {
+    console.error('STT error:', error)
+    return { success: false, error: error.message || 'Failed to transcribe audio' }
+  }
+}
+
+/**
+ * 图像生成
+ * 使用 Firebase Cloud Function 调用 OpenAI DALL-E API
+ */
+export async function generateImage(
+  prompt: string,
+  options: {
+    size?: '1024x1024' | '1792x1024' | '1024x1792'
+    quality?: 'standard' | 'hd'
+    style?: 'vivid' | 'natural'
+  } = {}
+): Promise<{ success: boolean; imageUrl?: string; revisedPrompt?: string; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const generateImageFn = httpsCallable<
+      { prompt: string; size?: string; quality?: string; style?: string },
+      { success: boolean; imageUrl: string; revisedPrompt?: string }
+    >(functions, 'generateImage')
+
+    const result = await generateImageFn({
+      prompt,
+      size: options.size || '1024x1024',
+      quality: options.quality || 'standard',
+      style: options.style || 'vivid',
+    })
+
+    return result.data
+  } catch (error: any) {
+    console.error('Image generation error:', error)
+    return { success: false, error: error.message || 'Failed to generate image' }
+  }
+}
+
+/**
+ * 创建新对话
+ */
+export async function createConversation(
+  title: string = 'New Chat'
+): Promise<{ success: boolean; conversationId?: string; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const createConvFn = httpsCallable<
+      { title: string },
+      { success: boolean; conversationId: string }
+    >(functions, 'createConversation')
+
+    const result = await createConvFn({ title })
+    return result.data
+  } catch (error: any) {
+    console.error('Create conversation error:', error)
+    return { success: false, error: error.message || 'Failed to create conversation' }
+  }
+}
+
+/**
+ * 获取对话历史
+ */
+export async function getConversations(
+  limit: number = 50
+): Promise<{ success: boolean; conversations?: any[]; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const getConvFn = httpsCallable<
+      { limit: number },
+      { success: boolean; conversations: any[] }
+    >(functions, 'getConversations')
+
+    const result = await getConvFn({ limit })
+    return result.data
+  } catch (error: any) {
+    console.error('Get conversations error:', error)
+    return { success: false, error: error.message || 'Failed to get conversations' }
+  }
+}
+
+/**
+ * 删除对话
+ */
+export async function deleteConversation(
+  conversationId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const auth = getAuth()
+    if (!auth.currentUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const deleteConvFn = httpsCallable<
+      { conversationId: string },
+      { success: boolean }
+    >(functions, 'deleteConversation')
+
+    const result = await deleteConvFn({ conversationId })
+    return result.data
+  } catch (error: any) {
+    console.error('Delete conversation error:', error)
+    return { success: false, error: error.message || 'Failed to delete conversation' }
   }
 }
 

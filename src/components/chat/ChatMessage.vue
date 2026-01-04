@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Message } from '../../stores/chat'
+import type { ChatMessage as MessageType } from '../../stores/chat'
 
 const props = defineProps<{
-  message: Message
+  message: MessageType
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
 
-const formatTime = (date: Date) => {
-  return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+const formatTime = (timestamp: number) => {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 </script>
 

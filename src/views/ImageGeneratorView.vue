@@ -79,7 +79,11 @@ const generateInspiration = () => {
     "An astronaut floating in space, Earth visible in the background, stars and galaxies surrounding, peaceful and vast.",
     "A cozy coffee shop interior, warm lighting, books on shelves, rain outside the window, vintage aesthetic.",
   ]
-  prompt.value = inspirations[Math.floor(Math.random() * inspirations.length)]
+  const randomIndex = Math.floor(Math.random() * inspirations.length)
+  const selectedInspiration = inspirations[randomIndex]
+  if (selectedInspiration) {
+    prompt.value = selectedInspiration
+  }
 }
 
 const generateImage = async () => {
